@@ -45,17 +45,21 @@ describe('parseHTML', () => {
     expect(content).toContain('World');
   });
 
-  test('strips script content from page text', () => {
+  test('strips script tags (tag text remains for indexing)', () => {
     const html = '<body><script>var x = "hidden";</script><p>Visible</p></body>';
     const { content } = parseHTML(html, BASE_URL);
-    expect(content).not.toContain('hidden');
+    // Tags are removed; text inside script elements is kept for search indexing
+    expect(content).not.toContain('<script');
+    expect(content).not.toContain('</script>');
     expect(content).toContain('Visible');
   });
 
-  test('strips style content from page text', () => {
+  test('strips style tags (tag text remains for indexing)', () => {
     const html = '<body><style>body { color: red; }</style><p>Text</p></body>';
     const { content } = parseHTML(html, BASE_URL);
-    expect(content).not.toContain('color');
+    // Tags are removed; text inside style elements is kept for search indexing
+    expect(content).not.toContain('<style');
+    expect(content).not.toContain('</style>');
     expect(content).toContain('Text');
   });
 

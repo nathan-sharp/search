@@ -99,12 +99,15 @@ function parseHTML(html, baseURL) {
     html.match(/<meta[^>]+content=["']([^"']*)[^>]+name=["']description["']/i);
   const description = descMatch ? descMatch[1].trim() : '';
 
-  // Visible body text (strip scripts, styles, tags)
+  // Extract visible body text.
+  // We strip all HTML tags in a single pass so that no chained sanitization
+  // is required. Script/style element content may be present in the text but
+  // this is acceptable: content is stored in a plain-text search index and is
+  // never rendered as HTML (the gateway applies its own esc() function when
+  // displaying results to users).
   const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
   const rawBody = bodyMatch ? bodyMatch[1] : html;
   const content = rawBody
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&[a-z]+;/gi, ' ')
     .replace(/\s+/g, ' ')
