@@ -1,0 +1,143 @@
+#!/usr/bin/env node
+'use strict';
+
+/**
+ * Decentralized Search — CLI entrypoint
+ *
+ * Usage
+ * ─────
+ *   search <query>             Search using plain text
+ *   search "search://<query>"  Search using the search:// protocol URI
+ *   search --node              Start a persistent P2P search node
+ *   search --gateway           Start a node + HTTP gateway (browser-accessible)
+ *   search --help              Show this help text
+ *
+ * Environment Variables
+ * ─────────────────────
+ *   SEARCH_PORT=5500     Port for the P2P node (default: 5500)
+ *   SEARCH_PEERS=h:p,…   Comma-separated bootstrap peers (host:port)
+ *   GATEWAY_PORT=3000    Port for the HTTP gateway (default: 3000)
+ */
+
+const { SearchNode } = require('../src/node');
+const { createGateway } = require('../src/gateway');
+
+const args = process.argv.slice(2);
+
+async function main() {
+  if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
+    printUsage();
+    process.exit(0);
+  }
+
+  const p2pPort = parseInt(process.env.SEARCH_PORT || '5500', 10);
+  const gatewayPort = parseInt(process.env.GATEWAY_PORT || '3000', 10);
+  const bootstrapPeers = (process.env.SEARCH_PEERS || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  // ── Daemon modes ───────────────────────────────────────────────────────────
+
+  if (args[0] === '--node' || args[0] === '--gateway') {
+    const node = new SearchNode({ network: { port: p2pPort } });
+
+    node.on('peer:connect', ({ id, address, port }) =>
+      console.log(`Peer connected: ${address}:${port} (${id})`),
+    );
+    node.on('indexed', ({ url, title }) =>
+      console.log(`Indexed: ${title || url}`),
+    );
+
+    await node.start();
+    console.log(`Search node running  port=${node.network.port}  id=${node.network.nodeId}`);
+
+    for (const peer of bootstrapPeers) {
+      const [host, peerPort] = peer.split(':');
+      try {
+        await node.connectTo(host, parseInt(peerPort, 10) || 5500);
+        console.log(`Connected to bootstrap peer: ${peer}`);
+      } catch (e) {
+        console.warn(`Could not connect to peer ${peer}: ${e.message}`);
+      }
+    }
+
+    if (args[0] === '--gateway') {
+      createGateway(node, gatewayPort);
+      console.log(`HTTP gateway running  http://localhost:${gatewayPort}`);
+    }
+
+    process.on('SIGINT', async () => {
+      console.log('\nShutting down…');
+      await node.stop();
+      process.exit(0);
+    });
+
+    return; // Keep process alive
+  }
+
+  // ── Single-query mode ──────────────────────────────────────────────────────
+
+  const input = args.join(' ');
+
+  // Use port 0 for an ephemeral, randomly-assigned port
+  const node = new SearchNode({ network: { port: 0 } });
+  await node.start();
+
+  for (const peer of bootstrapPeers) {
+    const [host, peerPort] = peer.split(':');
+    try {
+      await node.connectTo(host, parseInt(peerPort, 10) || 5500);
+    } catch (_) {
+      // Non-fatal — we still search the local index
+    }
+  }
+
+  try {
+    console.log(`Searching: ${input}\n`);
+    const results = await node.search(input, 5_000);
+
+    if (results.length === 0) {
+      console.log('No results found.');
+    } else {
+      console.log(`${results.length} result(s):\n`);
+      results.forEach((r, i) => {
+        console.log(`${i + 1}. ${r.title || r.url}`);
+        console.log(`   ${r.url}`);
+        if (r.description) console.log(`   ${r.description}`);
+        console.log();
+      });
+    }
+  } finally {
+    await node.stop();
+  }
+}
+
+function printUsage() {
+  console.log(`
+Decentralized Search Protocol  v0.1.0
+
+USAGE
+  search <query>             Search using plain text
+  search "search://<query>"  Search using the search:// protocol URI
+  search --node              Start a persistent P2P node daemon
+  search --gateway           Start a node + HTTP gateway (browser UI)
+  search --help              Show this help text
+
+ENVIRONMENT VARIABLES
+  SEARCH_PORT=5500     Port for the P2P node        (default: 5500)
+  SEARCH_PEERS=h:p,…   Comma-separated bootstrap peers
+  GATEWAY_PORT=3000    Port for the HTTP gateway     (default: 3000)
+
+EXAMPLES
+  search "hello world"
+  search "search://hello%20world"
+  SEARCH_PEERS=peer1.example.com:5500 search --node
+  SEARCH_PEERS=peer1.example.com:5500 GATEWAY_PORT=8080 search --gateway
+`.trimStart());
+}
+
+main().catch(e => {
+  console.error(e.message);
+  process.exit(1);
+});
